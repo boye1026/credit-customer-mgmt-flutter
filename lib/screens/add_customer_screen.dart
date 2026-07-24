@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import '../models/user.dart';
 import '../services/business_service.dart';
 
 class AddCustomerScreen extends StatefulWidget {
-  final String currentUser;
-  const AddCustomerScreen({super.key, required this.currentUser});
+  final User user;
+  const AddCustomerScreen({super.key, required this.user});
 
   @override
   State<AddCustomerScreen> createState() => _AddCustomerScreenState();
@@ -16,12 +17,9 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     'source': '陌拜',
     'basic_info': '',
     'gps_location': '',
-    'intention': '是',
-    'no_intention_reason': '',
     'introducer': '',
   };
-  final List<String> sourceOptions = ['陌拜', '电话', '转介绍'];
-  final List<String> intentionOptions = ['是', '否'];
+  final List<String> sourceOptions = ['陌拜', '电话', '转介绍', '存量'];
   bool submitting = false;
 
   void _showMsg(String msg) {
@@ -42,14 +40,12 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     setState(() => submitting = true);
     try {
       final msg = await BusinessService.addCustomer(
-        currentUser: widget.currentUser,
+        currentUser: widget.user.phone,
         name: _form['name']!,
         phone: _form['phone']!,
         source: _form['source']!,
         basicInfo: _form['basic_info']!,
         gpsLocation: _form['gps_location']!,
-        intention: _form['intention']!,
-        noIntentionReason: _form['no_intention_reason']!,
         introducer: _form['introducer']!,
       );
       _showMsg(msg);
@@ -68,8 +64,6 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
       _form['source'] = '陌拜';
       _form['basic_info'] = '';
       _form['gps_location'] = '';
-      _form['intention'] = '是';
-      _form['no_intention_reason'] = '';
       _form['introducer'] = '';
     });
   }
@@ -156,7 +150,6 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
           _field('客户姓名 *', 'name', hint: '如：张三'),
           _field('手机号 *', 'phone', hint: '11位手机号', type: TextInputType.phone),
           _picker('来源 *', 'source', sourceOptions, (s) => s as String),
-          _picker('意向', 'intention', intentionOptions, (s) => s == '是' ? '有意向' : '无意向'),
           if (_form['source'] == '陌拜')
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
@@ -197,8 +190,6 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
             ),
           if (_form['source'] == '转介绍')
             _field('介绍人 *', 'introducer', hint: '介绍人姓名'),
-          if (_form['intention'] == '否')
-            _field('无意向原因', 'no_intention_reason', hint: '如：暂无需求/利率不合适'),
           _field('基本信息', 'basic_info', hint: '行业、资产、资金用途等', maxLines: 3),
           Container(
             padding: const EdgeInsets.all(12),

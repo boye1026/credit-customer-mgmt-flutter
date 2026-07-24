@@ -1,22 +1,125 @@
+import 'dart:convert';
+import 'dart:math';
 import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/customer.dart';
+import '../models/user.dart';
 import 'db_service.dart';
 
 class BusinessService {
-  static const Map<String, String> users = {
-    '张伟': 'leader',
-    '李娜': 'member',
-    '王强': 'member',
-    '赵敏': 'member',
-    '刘洋': 'member',
-    '陈静': 'member',
-    '杨帆': 'member',
-  };
+  static const String defaultDepartment = '永年微贷二部';
   static const int dailyTarget = 3;
 
   static String get todayStr => DateFormat('yyyy-MM-dd').format(DateTime.now());
   static String get nowStr => DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+
+  static User? _currentUser;
+
+  static User? get currentUser => _currentUser;
+
+  static Future<void> setCurrentUser(User? user) async {
+    _currentUser = user;
+    final prefs = await SharedPreferences.getInstance();
+    if (user != null) {
+      await prefs.setString('current_user', json.encode(user.toMap()));
+    } else {
+      await prefs.remove('current_user');
+    }
+  }
+
+  static Future<User?> getSavedUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('current_user');
+    if (jsonStr == null) return null;
+    try {
+      final map = json.decode(jsonStr) as Map<String, dynamic>;
+      return User.fromMap(map);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static final Map<String, String> _smsCodes = {};
+  static final Map<String, int> _codeTimestamps = {};
+
+  static String _generateCode() {
+    return Random().nextInt(900000) + 100000;
+  }
+
+  static Future<String> sendVerificationCode(String phone) async {
+    if (!RegExp(r'^1[3-9]\d{9}$').hasMatch(phone)) throw '请输入正确的11位手机号';
+    
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_codeTimestamps.containsKey(phone) && now - _codeTimestamps[phone]! < 60000) {
+      throw '验证码发送过于频繁，请稍后再试';
+    }
+
+    final code = _generateCode().toString();
+    _smsCodes[phone] = code;
+    _codeTimestamps[phone] = now;
+    
+    return code;
+  }
+
+  static bool verifyCode(String phone, String code) {
+    return _smsCodes[phone] == code;
+  }
+
+  static Future<User> register({
+    required String phone,
+    required String password,
+    required String name,
+    required String department,
+    required String role,
+  }) async {
+    if (!RegExp(r'^1[3-9]\d{9}$').hasMatch(phone)) throw '请输入正确的11位手机号';
+    if (password.length < 6) throw '密码至少需要6位';
+    if (name.trim().isEmpty) throw '姓名不能为空';
+    if (!['leader', 'member'].contains(role)) throw '身份选择错误';
+
+    final exist = await DbService.getUserByPhone(phone);
+    if (exist != null) throw '该手机号已注册';
+
+    final user = User(
+      phone: phone,
+      password: password,
+      department: department,
+      role: role,
+      name: name.trim(),
+      createdAt: nowStr,
+    );
+
+    await DbService.insertUser(user);
+    return user;
+  }
+
+  static Future<User> login(String phone, String password) async {
+    if (!RegExp(r'^1[3-9]\d{9}$').hasMatch(phone)) throw '请输入正确的11位手机号';
+    if (password.isEmpty) throw '密码不能为空';
+
+    final user = await DbService.getUserByPhone(phone);
+    if (user == null) throw '该手机号未注册';
+    if (user.password != password) throw '密码错误';
+
+    await setCurrentUser(user);
+    return user;
+  }
+
+  static Future<void> resetPassword(String phone, String newPassword) async {
+    if (!RegExp(r'^1[3-9]\d{9}$').hasMatch(phone)) throw '请输入正确的11位手机号';
+    if (newPassword.length < 6) throw '密码至少需要6位';
+
+    final user = await DbService.getUserByPhone(phone);
+    if (user == null) throw '该手机号未注册';
+
+    await DbService.updateUserPassword(phone, newPassword);
+  }
+
+  static Future<void> logout() async {
+    await setCurrentUser(null);
+    _currentUser = null;
+  }
 
   static String calcNextDue(String firstContactDateStr, {DateTime? baseDate}) {
     final fcd = DateTime.tryParse(firstContactDateStr);
@@ -58,14 +161,12 @@ class BusinessService {
     required String source,
     String basicInfo = '',
     String gpsLocation = '',
-    String intention = '是',
-    String noIntentionReason = '',
     String introducer = '',
   }) async {
     if (name.trim().isEmpty) throw '客户姓名不能为空';
     if (phone.trim().isEmpty) throw '电话不能为空';
     if (!RegExp(r'^1[3-9]\d{9}$').hasMatch(phone)) throw '请输入正确的11位手机号';
-    if (!['陌拜', '电话', '转介绍'].contains(source)) throw '来源必须为 陌拜/电话/转介绍';
+    if (!['陌拜', '电话', '转介绍', '存量'].contains(source)) throw '来源必须为 陌拜/电话/转介绍/存量';
     if (source == '陌拜' && gpsLocation.isEmpty) throw '陌拜来源必须记录 GPS 定位';
     if (source == '转介绍' && introducer.isEmpty) throw '转介绍来源必须填写介绍人';
 
@@ -83,8 +184,6 @@ class BusinessService {
       source: source,
       basicInfo: basicInfo,
       gpsLocation: gpsLocation,
-      intention: intention,
-      noIntentionReason: noIntentionReason,
       introducer: introducer,
       firstContactDate: today,
       lastContactDate: today,
@@ -103,7 +202,6 @@ class BusinessService {
     final row = await DbService.getCustomerByPhone(phone);
     if (row == null) throw '未找到电话 $phone 对应的客户';
     if (!_canOperate(currentUser, row.owner)) throw '无权操作：该客户属于 ${row.owner}';
-    if (row.isStock) throw '该客户已放款（存量），无需回访';
 
     final today = todayStr;
     final now = nowStr;
@@ -142,7 +240,8 @@ class BusinessService {
     required String currentUser,
     String filter = '营销中',
   }) async {
-    final isLeader = users[currentUser] == 'leader';
+    final user = await DbService.getUserByPhone(currentUser);
+    final isLeader = user?.isLeader ?? false;
     return DbService.queryCustomers(
       owner: isLeader ? null : currentUser,
       filter: filter,
@@ -171,13 +270,16 @@ class BusinessService {
   }
 
   static Future<Map<String, dynamic>> dashboard(String currentUser) async {
-    if (users[currentUser] != 'leader') throw '看板仅团队负责人可查看';
+    final user = await DbService.getUserByPhone(currentUser);
+    if (user == null || !user.isLeader) throw '看板仅团队负责人可查看';
+    
     final today = todayStr;
+    final allUsers = await DbService.getAllUsers();
+    final members = allUsers.where((u) => u.role == 'member').toList();
     final result = <Map<String, dynamic>>[];
 
-    for (final entry in users.entries.where((e) => e.value == 'member')) {
-      final uname = entry.key;
-      final rows = await DbService.queryCustomers(owner: uname);
+    for (final member in members) {
+      final rows = await DbService.queryCustomers(owner: member.phone);
       final todayNew = rows.where((r) =>
           r.firstContactDate == today &&
           ['陌拜', '电话', '转介绍'].contains(r.source)).length;
@@ -189,7 +291,8 @@ class BusinessService {
           : 0.0;
 
       result.add({
-        'name': uname,
+        'name': member.name,
+        'phone': member.phone,
         'today_new': todayNew,
         'target': dailyTarget,
         'achieved': todayNew >= dailyTarget,
@@ -201,55 +304,12 @@ class BusinessService {
     return {'data': result, 'target': dailyTarget};
   }
 
-  static Future<String> initDemoData(String currentUser) async {
-    final all = await DbService.allCustomers();
-    if (all.isNotEmpty) throw '已有数据，如需重置请先清空';
-
-    final demos = [
-      {'owner': '李娜', 'name': '王芳', 'phone': '13800001001', 'source': '陌拜', 'basic_info': '个体经营，需资金周转', 'gps': '深圳市南山区科技园', 'intention': '是', 'daysAgo': 3},
-      {'owner': '李娜', 'name': '陈强', 'phone': '13800001002', 'source': '电话', 'basic_info': '装修公司老板', 'gps': '', 'intention': '是', 'daysAgo': 1},
-      {'owner': '李娜', 'name': '刘梅', 'phone': '13800001003', 'source': '转介绍', 'basic_info': '由王芳介绍', 'gps': '', 'intention': '是', 'introducer': '王芳', 'daysAgo': 0},
-      {'owner': '王强', 'name': '赵刚', 'phone': '13800002001', 'source': '陌拜', 'basic_info': '餐饮店扩张', 'gps': '深圳市福田区华强北', 'intention': '是', 'daysAgo': 8},
-      {'owner': '王强', 'name': '孙丽', 'phone': '13800002002', 'source': '电话', 'basic_info': '电商卖家', 'gps': '', 'intention': '否', 'noReason': '暂无需求', 'daysAgo': 15},
-      {'owner': '赵敏', 'name': '周杰', 'phone': '13800003001', 'source': '陌拜', 'basic_info': '物流公司', 'gps': '深圳市罗湖区东门', 'intention': '是', 'daysAgo': 95},
-      {'owner': '赵敏', 'name': '吴秀', 'phone': '13800003002', 'source': '转介绍', 'basic_info': '朋友推荐', 'gps': '', 'intention': '是', 'introducer': '周杰', 'daysAgo': 50},
-      {'owner': '刘洋', 'name': '郑伟', 'phone': '13800004001', 'source': '电话', 'basic_info': '制造业', 'gps': '', 'intention': '是', 'daysAgo': 2},
-      {'owner': '陈静', 'name': '冯霞', 'phone': '13800005001', 'source': '陌拜', 'basic_info': '美容院', 'gps': '深圳市宝安区', 'intention': '是', 'daysAgo': 35},
-      {'owner': '杨帆', 'name': '许峰', 'phone': '13800006001', 'source': '电话', 'basic_info': '外贸公司', 'gps': '', 'intention': '是', 'daysAgo': 0},
-    ];
-
-    final now = nowStr;
-    for (final d in demos) {
-      final fcdDate = DateTime.now().subtract(Duration(days: d['daysAgo'] as int));
-      final fcd = DateFormat('yyyy-MM-dd').format(fcdDate);
-      final dueDate = fcdDate.add(const Duration(days: 7));
-      final nextDue = DateFormat('yyyy-MM-dd').format(dueDate);
-      await DbService.insertCustomer(Customer(
-        owner: d['owner'] as String,
-        name: d['name'] as String,
-        phone: d['phone'] as String,
-        source: d['source'] as String,
-        basicInfo: d['basic_info'] as String,
-        gpsLocation: d['gps'] as String? ?? '',
-        intention: d['intention'] as String,
-        noIntentionReason: d['noReason'] as String? ?? '',
-        introducer: d['introducer'] as String? ?? '',
-        firstContactDate: fcd,
-        lastContactDate: fcd,
-        nextDueDate: nextDue,
-        createdAt: now,
-        contactTime: now,
-      ));
-    }
-    return '已生成 ${demos.length} 条演示数据';
-  }
-
-  static Future<String> resetData() async {
-    await DbService.deleteAll();
-    return '已清空所有客户数据';
-  }
-
   static bool _canOperate(String currentUser, String owner) {
-    return users[currentUser] == 'leader' || currentUser == owner;
+    return currentUser == owner;
+  }
+
+  static Future<bool> isLeader(String phone) async {
+    final user = await DbService.getUserByPhone(phone);
+    return user?.isLeader ?? false;
   }
 }

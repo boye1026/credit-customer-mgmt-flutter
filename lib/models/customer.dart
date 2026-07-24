@@ -6,8 +6,6 @@ class Customer {
   final String source;
   final String basicInfo;
   final String gpsLocation;
-  final String intention;
-  final String noIntentionReason;
   final String introducer;
   final String loanStatus;
   final String firstContactDate;
@@ -24,8 +22,6 @@ class Customer {
     required this.source,
     this.basicInfo = '',
     this.gpsLocation = '',
-    this.intention = '是',
-    this.noIntentionReason = '',
     this.introducer = '',
     this.loanStatus = '未放款',
     required this.firstContactDate,
@@ -53,8 +49,6 @@ class Customer {
       'source': source,
       'basic_info': basicInfo,
       'gps_location': gpsLocation,
-      'intention': intention,
-      'no_intention_reason': noIntentionReason,
       'introducer': introducer,
       'loan_status': loanStatus,
       'first_contact_date': firstContactDate,
@@ -74,8 +68,6 @@ class Customer {
       source: map['source'] as String,
       basicInfo: map['basic_info'] as String? ?? '',
       gpsLocation: map['gps_location'] as String? ?? '',
-      intention: map['intention'] as String? ?? '是',
-      noIntentionReason: map['no_intention_reason'] as String? ?? '',
       introducer: map['introducer'] as String? ?? '',
       loanStatus: map['loan_status'] as String? ?? '未放款',
       firstContactDate: map['first_contact_date'] as String,
@@ -94,8 +86,6 @@ class Customer {
     String? source,
     String? basicInfo,
     String? gpsLocation,
-    String? intention,
-    String? noIntentionReason,
     String? introducer,
     String? loanStatus,
     String? firstContactDate,
@@ -112,8 +102,6 @@ class Customer {
       source: source ?? this.source,
       basicInfo: basicInfo ?? this.basicInfo,
       gpsLocation: gpsLocation ?? this.gpsLocation,
-      intention: intention ?? this.intention,
-      noIntentionReason: noIntentionReason ?? this.noIntentionReason,
       introducer: introducer ?? this.introducer,
       loanStatus: loanStatus ?? this.loanStatus,
       firstContactDate: firstContactDate ?? this.firstContactDate,

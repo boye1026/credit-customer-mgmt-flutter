@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import '../models/user.dart';
 import '../services/business_service.dart';
 
 class DashboardScreen extends StatefulWidget {
-  final String currentUser;
-  const DashboardScreen({super.key, required this.currentUser});
+  final User user;
+  const DashboardScreen({super.key, required this.user});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -23,7 +24,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _load() async {
     setState(() => loading = true);
     try {
-      final res = await BusinessService.dashboard(widget.currentUser);
+      final res = await BusinessService.dashboard(widget.user.phone);
       setState(() {
         data = (res['data'] as List).cast<Map<String, dynamic>>();
         target = res['target'] as int;

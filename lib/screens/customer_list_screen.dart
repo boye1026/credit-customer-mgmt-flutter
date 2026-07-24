@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/customer.dart';
+import '../models/user.dart';
 import '../services/business_service.dart';
 
 class CustomerListScreen extends StatefulWidget {
-  final String currentUser;
-  const CustomerListScreen({super.key, required this.currentUser});
+  final User user;
+  const CustomerListScreen({super.key, required this.user});
 
   @override
   State<CustomerListScreen> createState() => _CustomerListScreenState();
@@ -27,12 +30,12 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
     setState(() => loading = true);
     try {
       final data = await BusinessService.listCustomers(
-        currentUser: widget.currentUser,
+        currentUser: widget.user.phone,
         filter: currentFilter,
       );
       Map<String, dynamic>? s;
-      if (BusinessService.users[widget.currentUser] != 'leader') {
-        s = await BusinessService.myStats(widget.currentUser);
+      if (!widget.user.isLeader) {
+        s = await BusinessService.myStats(widget.user.phone);
       }
       setState(() {
         customers = data;
@@ -49,12 +52,16 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  void _call(String phone) {
+    launchUrl(Uri.parse('tel:$phone'));
+  }
+
   Future<void> _visit(Customer c) async {
     final noteController = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('回访 ${c.name}'),
+        title: Text('回访记录 ${c.name}'),
         content: TextField(
           controller: noteController,
           decoration: const InputDecoration(hintText: '输入回访备注（可选）'),
@@ -69,7 +76,7 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
     if (ok != true) return;
     try {
       final msg = await BusinessService.visitCustomer(
-        currentUser: widget.currentUser,
+        currentUser: widget.user.phone,
         phone: c.phone,
         note: noteController.text,
       );
@@ -95,7 +102,7 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
     if (ok != true) return;
     try {
       final msg = await BusinessService.loanCustomer(
-        currentUser: widget.currentUser,
+        currentUser: widget.user.phone,
         phone: c.phone,
       );
       _showMsg(msg);
@@ -105,48 +112,119 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
     }
   }
 
-  Future<void> _loadDemo() async {
+  Future<void> _batchImport() async {
+    final inputController = TextEditingController();
+    bool hasPasted = false;
+    
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('生成演示数据'),
-        content: const Text('将生成 10 条演示数据，继续？'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('继续')),
-        ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setInnerState) => AlertDialog(
+          title: const Text('批量导入客户'),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('请粘贴数据（每行一条，格式：姓名,电话,来源,备注）', style: TextStyle(fontSize: 14)),
+                const SizedBox(height: 8),
+                const Text('示例：\n张三,13800001001,陌拜,个体经营\n李四,13800001002,电话,装修公司', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: inputController,
+                  maxLines: 8,
+                  decoration: const InputDecoration(
+                    hintText: '在此粘贴或输入数据...',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    TextButton(
+                      onPressed: () async {
+                        final data = await Clipboard.getData(Clipboard.kTextPlain);
+                        if (data?.text != null) {
+                          inputController.text = data!.text!;
+                          setInnerState(() => hasPasted = true);
+                        }
+                      },
+                      child: const Text('从剪贴板粘贴'),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        inputController.text = '张三,13800001001,存量,已放款客户\n李四,13800001002,存量,已放款客户\n王五,13800001003,存量,已放款客户';
+                      },
+                      child: const Text('填入示例'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('开始导入')),
+          ],
+        ),
       ),
     );
+    
     if (ok != true) return;
-    try {
-      final msg = await BusinessService.initDemoData(widget.currentUser);
-      _showMsg(msg);
-      _load();
-    } catch (e) {
-      _showMsg(e.toString());
+    
+    final lines = inputController.text.split('\n').where((l) => l.trim().isNotEmpty).toList();
+    if (lines.isEmpty) {
+      _showMsg('没有数据需要导入');
+      return;
     }
-  }
-
-  Future<void> _reset() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('清空数据'),
-        content: const Text('⚠️ 确认清空所有客户数据？此操作不可恢复！'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('确认清空')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    try {
-      final msg = await BusinessService.resetData();
-      _showMsg(msg);
-      _load();
-    } catch (e) {
-      _showMsg(e.toString());
+    
+    setState(() => loading = true);
+    int success = 0;
+    int failed = 0;
+    final failedMsgs = <String>[];
+    
+    for (final line in lines) {
+      final parts = line.split(',');
+      if (parts.length < 2) {
+        failed++;
+        failedMsgs.add('格式错误: $line');
+        continue;
+      }
+      final name = parts[0].trim();
+      final phone = parts[1].trim();
+      final source = parts.length > 2 ? parts[2].trim() : '存量';
+      final basicInfo = parts.length > 3 ? parts.sublist(3).join(',').trim() : '';
+      
+      try {
+        await BusinessService.addCustomer(
+          currentUser: widget.user.phone,
+          name: name,
+          phone: phone,
+          source: source,
+          basicInfo: basicInfo,
+        );
+        success++;
+      } catch (e) {
+        failed++;
+        failedMsgs.add('$name($phone): $e');
+      }
     }
+    
+    setState(() => loading = false);
+    _showMsg('导入完成：成功 $success 条，失败 $failed 条');
+    if (failedMsgs.isNotEmpty) {
+      await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('失败详情'),
+          content: SingleChildScrollView(
+            child: Text(failedMsgs.join('\n'), style: const TextStyle(fontSize: 13, color: Colors.red)),
+          ),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('关闭'))],
+        ),
+      );
+    }
+    _load();
   }
 
   Widget _buildStats() {
@@ -194,6 +272,7 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
       case '陌拜': return const Color(0xFF409eff);
       case '电话': return const Color(0xFF67c23a);
       case '转介绍': return const Color(0xFFe6a23c);
+      case '存量': return const Color(0xFF909399);
       default: return const Color(0xFF909399);
     }
   }
@@ -221,41 +300,46 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildStats(),
-              Row(
-                children: [
-                  Expanded(child: OutlinedButton(onPressed: _loadDemo, child: const Text('生成演示数据'))),
-                  const SizedBox(width: 12),
-                  Expanded(child: OutlinedButton(onPressed: _reset, style: OutlinedButton.styleFrom(foregroundColor: Colors.red), child: const Text('清空数据'))),
-                ],
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                height: 40,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: filters.length,
-                  itemBuilder: (ctx, i) {
-                    final f = filters[i];
-                    final label = f == 'all' ? '全部' : f;
-                    final active = currentFilter == f;
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        label: Text(label),
-                        selected: active,
-                        selectedColor: const Color(0xFF409eff),
-                        labelStyle: TextStyle(color: active ? Colors.white : const Color(0xFF606266)),
-                        onSelected: (_) {
-                          setState(() => currentFilter = f);
-                          _load();
-                        },
+                _buildStats(),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _batchImport,
+                        icon: const Icon(Icons.upload_file, size: 18),
+                        label: const Text('批量导入'),
+                        style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFF409eff)),
                       ),
-                    );
-                  },
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 12),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 40,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: filters.length,
+                    itemBuilder: (ctx, i) {
+                      final f = filters[i];
+                      final label = f == 'all' ? '全部' : f;
+                      final active = currentFilter == f;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          label: Text(label),
+                          selected: active,
+                          selectedColor: const Color(0xFF409eff),
+                          labelStyle: TextStyle(color: active ? Colors.white : const Color(0xFF606266)),
+                          onSelected: (_) {
+                            setState(() => currentFilter = f);
+                            _load();
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
               if (loading) const Center(child: CircularProgressIndicator())
               else if (customers.isEmpty)
                 const Padding(
@@ -287,8 +371,6 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                 const SizedBox(width: 8),
                 _tag(c.source, _sourceColor(c.source)),
                 const SizedBox(width: 6),
-                _tag(c.intention == '是' ? '有意向' : '无意向', c.intention == '是' ? const Color(0xFF67c23a) : const Color(0xFFf56c6c)),
-                const SizedBox(width: 6),
                 _tag(_statusText(c), _statusColor(c)),
               ],
             ),
@@ -300,17 +382,26 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
             if (c.gpsLocation.isNotEmpty) _row('定位', c.gpsLocation),
             if (c.introducer.isNotEmpty) _row('介绍人', c.introducer),
             if (c.basicInfo.isNotEmpty) _row('备注', c.basicInfo),
-            if (!c.isStock) ...[
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () => _visit(c),
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFecf5ff), foregroundColor: const Color(0xFF409eff)),
-                      child: const Text('回访'),
-                    ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => _call(c.phone),
+                    icon: const Icon(Icons.phone, size: 18),
+                    label: const Text('拨打电话'),
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF67c23a), foregroundColor: Colors.white),
                   ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => _visit(c),
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFecf5ff), foregroundColor: const Color(0xFF409eff)),
+                    child: const Text('回访记录'),
+                  ),
+                ),
+                if (!c.isStock) ...[
                   const SizedBox(width: 12),
                   Expanded(
                     child: ElevatedButton(
@@ -320,8 +411,8 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
                     ),
                   ),
                 ],
-              ),
-            ],
+              ],
+            ),
           ],
         ),
       ),

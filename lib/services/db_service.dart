@@ -2,6 +2,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/customer.dart';
+import '../models/user.dart';
 
 class DbService {
   static Database? _db;
@@ -16,7 +17,7 @@ class DbService {
     final path = join(dir.path, 'credit_customers.db');
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE customers (
@@ -38,6 +39,32 @@ class DbService {
             contact_time TEXT
           )
         ''');
+        await db.execute('''
+          CREATE TABLE users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            phone TEXT NOT NULL UNIQUE,
+            password TEXT NOT NULL,
+            department TEXT NOT NULL,
+            role TEXT NOT NULL,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          )
+        ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion == 1) {
+          await db.execute('''
+            CREATE TABLE users (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              phone TEXT NOT NULL UNIQUE,
+              password TEXT NOT NULL,
+              department TEXT NOT NULL,
+              role TEXT NOT NULL,
+              name TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            )
+          ''');
+        }
       },
     );
   }
@@ -158,5 +185,27 @@ class DbService {
     final db = await database;
     final rows = await db.query('customers');
     return rows.map(Customer.fromMap).toList();
+  }
+
+  static Future<int> insertUser(User u) async {
+    final db = await database;
+    return db.insert('users', u.toMap());
+  }
+
+  static Future<User?> getUserByPhone(String phone) async {
+    final db = await database;
+    final rows = await db.query('users', where: 'phone = ?', whereArgs: [phone], limit: 1);
+    return rows.isEmpty ? null : User.fromMap(rows.first);
+  }
+
+  static Future<int> updateUserPassword(String phone, String newPassword) async {
+    final db = await database;
+    return db.update('users', {'password': newPassword}, where: 'phone = ?', whereArgs: [phone]);
+  }
+
+  static Future<List<User>> getAllUsers() async {
+    final db = await database;
+    final rows = await db.query('users');
+    return rows.map(User.fromMap).toList();
   }
 }
