@@ -46,7 +46,7 @@ class BusinessService {
     if (permission == LocationPermission.deniedForever) return null;
 
     final pos = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.best),
+      desiredAccuracy: LocationAccuracy.best,
     );
     return '${pos.latitude.toStringAsFixed(6)},${pos.longitude.toStringAsFixed(6)}';
   }
