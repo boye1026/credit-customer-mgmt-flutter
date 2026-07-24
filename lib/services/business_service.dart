@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:math';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/customer.dart';
 import '../models/user.dart';
 import 'db_service.dart';
@@ -10,6 +12,8 @@ import 'db_service.dart';
 class BusinessService {
   static const String defaultDepartment = '永年微贷二部';
   static const int dailyTarget = 3;
+
+  static const MethodChannel _smsChannel = MethodChannel('com.example.credit_customer_mgmt/sms');
 
   static String get todayStr => DateFormat('yyyy-MM-dd').format(DateTime.now());
   static String get nowStr => DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
@@ -44,21 +48,76 @@ class BusinessService {
   static final Map<String, int> _codeTimestamps = {};
 
   static String _generateCode() {
-    return Random().nextInt(900000) + 100000;
+    return (Random().nextInt(900000) + 100000).toString();
+  }
+
+  static Future<bool> _hasSmsPermission() async {
+    try {
+      final result = await _smsChannel.invokeMethod<bool>('hasSmsPermission');
+      return result ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> _requestSmsPermission() async {
+    try {
+      final result = await _smsChannel.invokeMethod<bool>('requestSmsPermission');
+      return result ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> _sendSmsNative(String phone, String message) async {
+    try {
+      final result = await _smsChannel.invokeMethod<bool>('sendSms', {
+        'phone': phone,
+        'message': message,
+      });
+      return result ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<String> sendVerificationCode(String phone) async {
     if (!RegExp(r'^1[3-9]\d{9}$').hasMatch(phone)) throw '请输入正确的11位手机号';
-    
+
     final now = DateTime.now().millisecondsSinceEpoch;
     if (_codeTimestamps.containsKey(phone) && now - _codeTimestamps[phone]! < 60000) {
       throw '验证码发送过于频繁，请稍后再试';
     }
 
     final code = _generateCode().toString();
+    final message = '【信贷客户管理】您的验证码是$code，5分钟内有效。';
+
+    bool hasPermission = await _hasSmsPermission();
+    if (!hasPermission) {
+      hasPermission = await _requestSmsPermission();
+    }
+
+    bool sent = false;
+    if (hasPermission) {
+      sent = await _sendSmsNative(phone, message);
+    }
+
+    if (!sent) {
+      final smsBody = Uri.encodeComponent(message);
+      final smsUri = Uri.parse('sms:$phone?body=$smsBody');
+      if (await canLaunchUrl(smsUri)) {
+        await launchUrl(smsUri);
+        sent = true;
+      }
+    }
+
     _smsCodes[phone] = code;
     _codeTimestamps[phone] = now;
-    
+
+    if (!sent) {
+      throw '短信发送失败，请检查短信权限或稍后重试';
+    }
+
     return code;
   }
 
@@ -106,6 +165,13 @@ class BusinessService {
     return user;
   }
 
+  static Future<User> loginByPhone(String phone) async {
+    final user = await DbService.getUserByPhone(phone);
+    if (user == null) throw '该手机号未注册';
+    await setCurrentUser(user);
+    return user;
+  }
+
   static Future<void> resetPassword(String phone, String newPassword) async {
     if (!RegExp(r'^1[3-9]\d{9}$').hasMatch(phone)) throw '请输入正确的11位手机号';
     if (newPassword.length < 6) throw '密码至少需要6位';
@@ -114,6 +180,11 @@ class BusinessService {
     if (user == null) throw '该手机号未注册';
 
     await DbService.updateUserPassword(phone, newPassword);
+  }
+
+  static Future<String?> getSavedPhone() async {
+    final user = await getSavedUser();
+    return user?.phone;
   }
 
   static Future<void> logout() async {

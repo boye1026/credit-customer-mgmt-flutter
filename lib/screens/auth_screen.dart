@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter/services.dart';
 import '../services/business_service.dart';
+import '../services/biometric_service.dart';
+import '../services/pattern_service.dart';
 import '../models/user.dart';
 import 'home_screen.dart';
+import '../widgets/pattern_lock.dart';
 
 enum AuthMode { login, register, forgotPassword }
 
@@ -24,7 +27,24 @@ class _AuthScreenState extends State<AuthScreen> {
   String _role = 'member';
   bool _submitting = false;
   int _codeCountdown = 0;
-  String? _code;
+  bool _biometricAvailable = false;
+  bool _patternSet = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkBiometricAndPattern();
+  }
+
+  Future<void> _checkBiometricAndPattern() async {
+    final bioAvail = await BiometricService.isAvailable();
+    final bioEnabled = await BiometricService.isEnabled();
+    final patSet = await PatternService.isSet();
+    setState(() {
+      _biometricAvailable = bioAvail && bioEnabled;
+      _patternSet = patSet;
+    });
+  }
 
   void _showMsg(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
@@ -37,8 +57,8 @@ class _AuthScreenState extends State<AuthScreen> {
       return;
     }
     try {
-      _code = await BusinessService.sendVerificationCode(phone);
-      _showMsg('验证码已发送：$_code');
+      await BusinessService.sendVerificationCode(phone);
+      _showMsg('验证码已通过短信发送，请查收');
       setState(() => _codeCountdown = 60);
       _startCountdown();
     } catch (e) {
@@ -49,8 +69,10 @@ class _AuthScreenState extends State<AuthScreen> {
   void _startCountdown() {
     if (_codeCountdown > 0) {
       Future.delayed(const Duration(seconds: 1), () {
-        setState(() => _codeCountdown--);
-        _startCountdown();
+        if (mounted) {
+          setState(() => _codeCountdown--);
+          _startCountdown();
+        }
       });
     }
   }
@@ -70,9 +92,7 @@ class _AuthScreenState extends State<AuthScreen> {
     setState(() => _submitting = true);
     try {
       final user = await BusinessService.login(phone, password);
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => HomeScreen(user: user)),
-      );
+      _navigateHome(user);
     } catch (e) {
       _showMsg(e.toString());
     } finally {
@@ -114,9 +134,7 @@ class _AuthScreenState extends State<AuthScreen> {
       );
       await BusinessService.setCurrentUser(user);
       _showMsg('注册成功');
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => HomeScreen(user: user)),
-      );
+      _navigateHome(user);
     } catch (e) {
       _showMsg(e.toString());
     } finally {
@@ -162,6 +180,62 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  Future<void> _biometricLogin() async {
+    final phone = await BusinessService.getSavedPhone();
+    if (phone == null) {
+      _showMsg('请先使用密码登录一次');
+      return;
+    }
+    final success = await BiometricService.authenticate(reason: '请验证指纹以登录');
+    if (success) {
+      try {
+        final user = await BusinessService.loginByPhone(phone);
+        _navigateHome(user);
+      } catch (e) {
+        _showMsg(e.toString());
+      }
+    } else {
+      _showMsg('指纹验证失败');
+    }
+  }
+
+  void _patternLogin() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PatternLock(
+          title: '图案登录',
+          subtitle: '请绘制您的解锁图案',
+          isVerifyMode: true,
+          onPatternComplete: (pattern) async {
+            final ok = await PatternService.verifyPattern(pattern);
+            if (ok) {
+              final phone = await BusinessService.getSavedPhone();
+              if (phone != null) {
+                final user = await BusinessService.loginByPhone(phone);
+                if (mounted) {
+                  Navigator.of(context).pop();
+                  _navigateHome(user);
+                }
+              }
+            } else {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('图案错误')),
+                );
+              }
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  void _navigateHome(User user) {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => HomeScreen(user: user)),
+    );
+  }
+
   void _switchMode(AuthMode mode) {
     setState(() {
       _mode = mode;
@@ -199,13 +273,39 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 12),
         _submitButton('登录', _login),
+        if (_biometricAvailable || _patternSet) ...[
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              if (_biometricAvailable)
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _biometricLogin,
+                    icon: const Icon(Icons.fingerprint),
+                    label: const Text('指纹登录'),
+                    style: OutlinedButton.styleFrom(foregroundColor: Colors.white),
+                  ),
+                ),
+              if (_biometricAvailable && _patternSet) const SizedBox(width: 12),
+              if (_patternSet)
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _patternLogin,
+                    icon: const Icon(Icons.pattern),
+                    label: const Text('图案登录'),
+                    style: OutlinedButton.styleFrom(foregroundColor: Colors.white),
+                  ),
+                ),
+            ],
+          ),
+        ],
         const SizedBox(height: 16),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text('还没有账号？'),
+            const Text('还没有账号？', style: TextStyle(color: Colors.white70)),
             TextButton(onPressed: () => _switchMode(AuthMode.register), child: const Text('立即注册')),
           ],
         ),
@@ -221,17 +321,64 @@ class _AuthScreenState extends State<AuthScreen> {
         _field('确认密码', _confirmPasswordController, hint: '请再次输入密码', obscure: true),
         _field('姓名', _nameController, hint: '请输入姓名'),
         const SizedBox(height: 16),
-        _picker('部门', _department, ['永年微贷二部'], (s) => s),
-        const SizedBox(height: 16),
-        _picker('身份', _role, ['member', 'leader'], (s) => s == 'leader' ? '团队长' : '客户经理'),
+        _buildRoleSelector(),
         const SizedBox(height: 20),
         _submitButton('注册', _register),
         const SizedBox(height: 16),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text('已有账号？'),
+            const Text('已有账号？', style: TextStyle(color: Colors.white70)),
             TextButton(onPressed: () => _switchMode(AuthMode.login), child: const Text('立即登录')),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRoleSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('身份选择（注册后不可更改）', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Colors.white70)),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setState(() => _role = 'member'),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    color: _role == 'member' ? const Color(0xFF409eff) : Colors.transparent,
+                    border: Border.all(color: _role == 'member' ? const Color(0xFF409eff) : Colors.white30),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Center(
+                    child: Text('客户经理', style: TextStyle(color: _role == 'member' ? Colors.white : Colors.white70, fontSize: 16)),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setState(() => _role = 'leader'),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    color: _role == 'leader' ? const Color(0xFFe6a23c) : Colors.transparent,
+                    border: Border.all(color: _role == 'leader' ? const Color(0xFFe6a23c) : Colors.white30),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Center(
+                    child: Text('团队长', style: TextStyle(color: _role == 'leader' ? Colors.white : Colors.white70, fontSize: 16)),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ],
@@ -252,7 +399,7 @@ class _AuthScreenState extends State<AuthScreen> {
               child: ElevatedButton(
                 onPressed: _codeCountdown > 0 ? null : _sendCode,
                 style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFecf5ff), foregroundColor: const Color(0xFF409eff)),
-                child: Text(_codeCountdown > 0 ? '$_codeCountdowns' : '获取验证码'),
+                child: Text(_codeCountdown > 0 ? '${_codeCountdown}s' : '获取验证码'),
               ),
             ),
           ],
@@ -264,7 +411,7 @@ class _AuthScreenState extends State<AuthScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text('记住密码了？'),
+            const Text('记住密码了？', style: TextStyle(color: Colors.white70)),
             TextButton(onPressed: () => _switchMode(AuthMode.login), child: const Text('立即登录')),
           ],
         ),
@@ -279,43 +426,16 @@ class _AuthScreenState extends State<AuthScreen> {
         controller: controller,
         keyboardType: keyboardType,
         obscureText: obscure,
+        style: const TextStyle(color: Colors.white),
         decoration: InputDecoration(
           labelText: label,
           hintText: hint,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+          labelStyle: const TextStyle(color: Colors.white70),
+          hintStyle: const TextStyle(color: Colors.white38),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.white30)),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.white30)),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFF409eff))),
           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        ),
-      ),
-    );
-  }
-
-  Widget _picker(String label, String value, List<String> options, String Function(String) labelFn) {
-    return InkWell(
-      onTap: () async {
-        final selected = await showModalBottomSheet<String>(
-          context: context,
-          builder: (ctx) => SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: options.map((o) => ListTile(
-                title: Text(labelFn(o)),
-                trailing: value == o ? const Icon(Icons.check, color: Color(0xFF409eff)) : null,
-                onTap: () => Navigator.pop(ctx, o),
-              )).toList(),
-            ),
-          ),
-        );
-        if (selected != null) setState(() => value = selected);
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(border: Border.all(), borderRadius: BorderRadius.circular(10)),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(labelFn(value)),
-            const Icon(Icons.arrow_drop_down, color: Colors.grey),
-          ],
         ),
       ),
     );
@@ -327,7 +447,7 @@ class _AuthScreenState extends State<AuthScreen> {
       height: 50,
       child: ElevatedButton(
         onPressed: _submitting ? null : onPressed,
-        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1a2a6c)),
+        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF409eff)),
         child: _submitting ? const CircularProgressIndicator(color: Colors.white) : Text(text, style: const TextStyle(fontSize: 18)),
       ),
     );
@@ -343,25 +463,18 @@ class _AuthScreenState extends State<AuthScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const SizedBox(height: 60),
-              const Icon(Icons.account_balance, size: 80, color: Colors.white),
-              const SizedBox(height: 24),
-              const Text('信贷客户管理', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white), textAlign: TextAlign.center),
+              const SizedBox(height: 50),
+              const Icon(Icons.account_balance, size: 72, color: Colors.white),
+              const SizedBox(height: 20),
+              const Text('信贷客户管理', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white), textAlign: TextAlign.center),
               const SizedBox(height: 8),
-              Text(_mode == AuthMode.login ? '请登录您的账号' : (_mode == AuthMode.register ? '注册新账号' : '找回密码'), style: const TextStyle(fontSize: 16, color: Colors.white70), textAlign: TextAlign.center),
-              const SizedBox(height: 40),
-              Container(
-                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-                padding: const EdgeInsets.all(24),
-                child: _buildForm(),
+              Text(
+                _mode == AuthMode.login ? '请登录您的账号' : (_mode == AuthMode.register ? '注册新账号' : '找回密码'),
+                style: const TextStyle(fontSize: 16, color: Colors.white70),
+                textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 24),
-              Center(
-                child: InkWell(
-                  onTap: () => launchUrl(Uri.parse('tel:400-000-0000')),
-                  child: const Text('客服热线：400-000-0000', style: TextStyle(color: Colors.white70)),
-                ),
-              ),
+              const SizedBox(height: 32),
+              _buildForm(),
             ],
           ),
         ),

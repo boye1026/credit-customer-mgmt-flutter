@@ -5,6 +5,7 @@ import 'customer_list_screen.dart';
 import 'add_customer_screen.dart';
 import 'dashboard_screen.dart';
 import 'auth_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final User user;
@@ -69,8 +70,14 @@ class _HomeScreenState extends State<HomeScreen> {
           PopupMenuButton<String>(
             onSelected: (value) {
               if (value == 'logout') _logout();
+              if (value == 'settings') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                );
+              }
             },
             itemBuilder: (context) => [
+              const PopupMenuItem(value: 'settings', child: Text('安全设置')),
               const PopupMenuItem(value: 'logout', child: Text('退出登录')),
             ],
           ),
