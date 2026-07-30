@@ -13,6 +13,7 @@ class Customer {
   String nextDueDate;
   final String createdAt;
   String contactTime;
+  final String photoPath;
 
   Customer({
     this.id,
@@ -29,6 +30,7 @@ class Customer {
     required this.nextDueDate,
     required this.createdAt,
     required this.contactTime,
+    this.photoPath = '',
   });
 
   bool get isStock => loanStatus == '已放款';
@@ -56,6 +58,7 @@ class Customer {
       'next_due_date': nextDueDate,
       'created_at': createdAt,
       'contact_time': contactTime,
+      'photo_path': photoPath,
     };
   }
 
@@ -75,6 +78,7 @@ class Customer {
       nextDueDate: map['next_due_date'] as String,
       createdAt: map['created_at'] as String,
       contactTime: map['contact_time'] as String,
+      photoPath: map['photo_path'] as String? ?? '',
     );
   }
 
@@ -93,6 +97,7 @@ class Customer {
     String? nextDueDate,
     String? createdAt,
     String? contactTime,
+    String? photoPath,
   }) {
     return Customer(
       id: id ?? this.id,
@@ -109,6 +114,7 @@ class Customer {
       nextDueDate: nextDueDate ?? this.nextDueDate,
       createdAt: createdAt ?? this.createdAt,
       contactTime: contactTime ?? this.contactTime,
+      photoPath: photoPath ?? this.photoPath,
     );
   }
 }

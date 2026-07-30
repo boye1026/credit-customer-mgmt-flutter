@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'dart:io';
 import '../models/customer.dart';
 import '../models/user.dart';
 import '../services/business_service.dart';
@@ -356,6 +357,7 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
   }
 
   Widget _buildCard(Customer c) {
+    final hasPhoto = c.photoPath.isNotEmpty && File(c.photoPath).existsSync();
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -366,22 +368,49 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(c.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(width: 8),
-                _tag(c.source, _sourceColor(c.source)),
-                const SizedBox(width: 6),
-                _tag(_statusText(c), _statusColor(c)),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(c.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          const SizedBox(width: 8),
+                          _tag(c.source, _sourceColor(c.source)),
+                          const SizedBox(width: 6),
+                          _tag(_statusText(c), _statusColor(c)),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      _row('电话', c.phone),
+                      _row('归属', c.owner),
+                      _row('最近联系', c.contactTime),
+                      _row('下次应联系', c.nextDueDate, highlight: c.isOverdue),
+                      if (c.gpsLocation.isNotEmpty) _row('定位', c.gpsLocation),
+                      if (c.introducer.isNotEmpty) _row('介绍人', c.introducer),
+                      if (c.basicInfo.isNotEmpty) _row('备注', c.basicInfo),
+                    ],
+                  ),
+                ),
+                if (hasPhoto) ...[
+                  const SizedBox(width: 10),
+                  GestureDetector(
+                    onTap: () => _viewPhoto(c.photoPath),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.file(
+                        File(c.photoPath),
+                        width: 80,
+                        height: 80,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
-            const SizedBox(height: 10),
-            _row('电话', c.phone),
-            _row('归属', c.owner),
-            _row('最近联系', c.contactTime),
-            _row('下次应联系', c.nextDueDate, highlight: c.isOverdue),
-            if (c.gpsLocation.isNotEmpty) _row('定位', c.gpsLocation),
-            if (c.introducer.isNotEmpty) _row('介绍人', c.introducer),
-            if (c.basicInfo.isNotEmpty) _row('备注', c.basicInfo),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -414,6 +443,26 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  void _viewPhoto(String path) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            foregroundColor: Colors.white,
+            title: const Text('客户照片'),
+          ),
+          body: Center(
+            child: InteractiveViewer(
+              child: Image.file(File(path)),
+            ),
+          ),
         ),
       ),
     );

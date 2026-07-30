@@ -233,6 +233,7 @@ class BusinessService {
     String basicInfo = '',
     String gpsLocation = '',
     String introducer = '',
+    String photoPath = '',
   }) async {
     if (name.trim().isEmpty) throw '客户姓名不能为空';
     if (phone.trim().isEmpty) throw '电话不能为空';
@@ -261,6 +262,7 @@ class BusinessService {
       nextDueDate: nextDue,
       createdAt: now,
       contactTime: now,
+      photoPath: photoPath,
     ));
     return '新增成功：$name（$phone），来源=$source';
   }

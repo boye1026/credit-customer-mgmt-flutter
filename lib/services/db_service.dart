@@ -17,7 +17,7 @@ class DbService {
     final path = join(dir.path, 'credit_customers.db');
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE customers (
@@ -36,7 +36,8 @@ class DbService {
             last_contact_date TEXT,
             next_due_date TEXT,
             created_at TEXT,
-            contact_time TEXT
+            contact_time TEXT,
+            photo_path TEXT
           )
         ''');
         await db.execute('''
@@ -64,6 +65,11 @@ class DbService {
               created_at TEXT NOT NULL
             )
           ''');
+        }
+        if (oldVersion < 3) {
+          try {
+            await db.execute('ALTER TABLE customers ADD COLUMN photo_path TEXT');
+          } catch (_) {}
         }
       },
     );
